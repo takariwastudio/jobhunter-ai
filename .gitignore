@@ -50,6 +50,7 @@ uploads/
 *.docx
 *.doc
 *.txt
+!requirements.txt
 *.png
 *.jpg
 *.jpeg
@@ -74,7 +75,7 @@ build/
 *.local
 
 # Docker
-.dockerignore
+# .dockerignore files should be committed
 
 # OS
 .DS_Store
