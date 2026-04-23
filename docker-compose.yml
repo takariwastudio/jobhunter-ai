@@ -1,72 +1,29 @@
 version: "3.8"
 
 services:
-  # PostgreSQL Database
-  db:
-    image: postgres:15-alpine
-    container_name: jobhunter-db
-    environment:
-      POSTGRES_USER: jobhunter
-      POSTGRES_PASSWORD: jobhunter123
-      POSTGRES_DB: jobhunter
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jobhunter"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # Redis for task queue
-  redis:
-    image: redis:7-alpine
-    container_name: jobhunter-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-  # FastAPI Backend
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: jobhunter-backend
-    environment:
-      - DATABASE_URL=postgresql://jobhunter:jobhunter123@db:5432/jobhunter
-      - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=super-secret-key-change-in-production
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    env_file:
+      - .env
     volumes:
       - ./backend:/app
-      - uploads_data:/app/uploads
     ports:
       - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # React Frontend
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: jobhunter-frontend
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://localhost:8000/api/v1
     volumes:
       - ./frontend:/app
       - /app/node_modules
     ports:
       - "5173:5173"
     command: npm run dev -- --host
-
-volumes:
-  postgres_data:
-  redis_data:
-  uploads_data:
