@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { FileUp, LayoutDashboard, Home, Sparkles } from 'lucide-react'
+import { FileUp, Home, Sparkles } from 'lucide-react'
 
 interface LayoutProps {
   children: React.ReactNode

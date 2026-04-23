@@ -14,12 +14,11 @@ import {
   Save,
   X,
   Loader2,
-  CheckCircle,
   Sparkles,
   ArrowRight
 } from 'lucide-react'
 import { cvApi } from '../services/api'
-import type { ParsedProfile, ExperienceItem, EducationItem, SkillItem, LanguageItem } from '../types'
+import type { ParsedProfile } from '../types'
 
 export default function Dashboard() {
   const { cvId } = useParams<{ cvId: string }>()

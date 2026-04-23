@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import axios, { AxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import type { CV, ParsedProfile, ApiError } from '../types'
