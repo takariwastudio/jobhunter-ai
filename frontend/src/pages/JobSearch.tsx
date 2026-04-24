@@ -36,9 +36,9 @@ function JobCard({
   onUnsave?: (externalId: string) => void
   saving?: boolean
 }) {
-  const isSearchResult = 'is_saved' in job
-  const isSaved = isSearchResult ? job.is_saved : true
-  const externalId = 'external_id' in job ? job.external_id : job.external_id
+  const isSearchResult = (job as JobSearchResult).is_saved !== undefined
+  const isSaved = isSearchResult ? (job as JobSearchResult).is_saved : true
+  const externalId = job.external_id
 
   function handleToggle() {
     if (isSaved) {
@@ -48,7 +48,7 @@ function JobCard({
     }
   }
 
-  const sourceUrl = 'source_url' in job ? job.source_url : undefined
+  const sourceUrl = job.source_url
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow flex flex-col gap-3">
