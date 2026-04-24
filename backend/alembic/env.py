@@ -11,6 +11,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import Base
 from app.config import get_settings
 
+# Import all models so Base.metadata is fully populated for autogenerate
+import app.models.user       # noqa: F401
+import app.models.cv         # noqa: F401
+import app.models.job        # noqa: F401
+import app.models.saved_job  # noqa: F401
+
 settings = get_settings()
 
 # this is the Alembic Config object

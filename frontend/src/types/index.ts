@@ -62,6 +62,56 @@ export interface Job {
   created_at: string
 }
 
+export interface JobSearchResult {
+  external_id: string
+  title: string
+  company: string
+  description: string
+  source: 'adzuna' | 'jsearch'
+  source_url: string
+  location?: string
+  salary_range?: string
+  job_type?: string
+  remote?: boolean
+  posted_date?: string
+  is_saved: boolean
+}
+
+export interface SavedJob {
+  id: string
+  external_id: string
+  source: string
+  title: string
+  company: string
+  description: string
+  location?: string
+  salary_range?: string
+  job_type?: string
+  remote?: boolean
+  source_url?: string
+  posted_date?: string
+  saved_at: string
+}
+
+export interface JobSearchParams {
+  q: string
+  location?: string
+  country?: string
+  remote?: boolean
+  page?: number
+  limit?: number
+  source?: 'adzuna' | 'jsearch' | 'all'
+}
+
+export interface User {
+  id: string
+  email: string | null
+  phone: string | null
+  display_name: string | null
+  avatar_url: string | null
+  provider: string
+}
+
 export interface ApiError {
   message: string
   detail?: string

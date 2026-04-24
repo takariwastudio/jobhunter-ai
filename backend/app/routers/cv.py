@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app.models.cv import CV, ParsedProfile, CVStatus
+from app.models.user import User
 from app.schemas.cv import (
     CVResponse,
     ParsedProfileData,
@@ -20,6 +21,7 @@ from app.services.cv_parser import CVParser
 from app.services.ai_service import AIService
 from app.services.storage_service import StorageService
 from app.config import get_settings
+from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/cvs", tags=["CVs"])
 settings = get_settings()
@@ -29,12 +31,13 @@ settings = get_settings()
 async def upload_cv(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     contents = await file.read()
     if len(contents) > settings.MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size is {settings.MAX_FILE_SIZE / 1024 / 1024:.0f}MB",
+            detail=f"Archivo demasiado grande. Máximo {settings.MAX_FILE_SIZE / 1024 / 1024:.0f}MB",
         )
 
     parser = CVParser()
@@ -42,12 +45,12 @@ async def upload_cv(
     if not parser.is_supported(mime_type):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type: {mime_type}. Supported: PDF, DOCX, TXT, PNG, JPG",
+            detail=f"Tipo de archivo no soportado: {mime_type}. Soportados: PDF, DOCX, TXT, PNG, JPG",
         )
 
     original_filename = file.filename or "unnamed"
     ext = original_filename.rsplit(".", 1)[-1] if "." in original_filename else "bin"
-    file_key = f"{uuid.uuid4()}.{ext}"
+    file_key = f"{current_user.id}/{uuid.uuid4()}.{ext}"
 
     storage = StorageService()
     try:
@@ -55,10 +58,11 @@ async def upload_cv(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload file: {str(e)}",
+            detail=f"Error al subir el archivo: {str(e)}",
         )
 
     cv = CV(
+        user_id=current_user.id,
         original_filename=original_filename,
         file_path=file_key,
         mime_type=mime_type,
@@ -74,11 +78,14 @@ async def upload_cv(
 async def parse_cv(
     cv_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(CV).where(CV.id == cv_id))
+    result = await db.execute(
+        select(CV).where(CV.id == cv_id, CV.user_id == current_user.id)
+    )
     cv = result.scalar_one_or_none()
     if not cv:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV no encontrado")
 
     cv.status = CVStatus.PROCESSING.value
     await db.commit()
@@ -132,18 +139,29 @@ async def parse_cv(
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to parse CV: {str(e)}",
+            detail=f"Error al procesar el CV: {str(e)}",
         )
 
 
 @router.get("/{cv_id}/profile", response_model=ParsedProfileData)
-async def get_profile(cv_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_profile(
+    cv_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Verify ownership
+    cv_result = await db.execute(
+        select(CV).where(CV.id == cv_id, CV.user_id == current_user.id)
+    )
+    if not cv_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV no encontrado")
+
     result = await db.execute(select(ParsedProfile).where(ParsedProfile.cv_id == cv_id))
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profile not found. Have you parsed this CV?",
+            detail="Perfil no encontrado. ¿Ya procesaste este CV?",
         )
     return ParsedProfileData(
         full_name=profile.full_name,
@@ -163,11 +181,18 @@ async def update_profile(
     cv_id: uuid.UUID,
     profile_data: ParsedProfileData,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    cv_result = await db.execute(
+        select(CV).where(CV.id == cv_id, CV.user_id == current_user.id)
+    )
+    if not cv_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV no encontrado")
+
     result = await db.execute(select(ParsedProfile).where(ParsedProfile.cv_id == cv_id))
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Perfil no encontrado")
 
     profile.full_name = profile_data.full_name
     profile.email = profile_data.email
@@ -185,36 +210,53 @@ async def update_profile(
 @router.get("/", response_model=List[CVResponse])
 async def list_cvs(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100,
 ):
     result = await db.execute(
-        select(CV).offset(skip).limit(limit).order_by(CV.created_at.desc())
+        select(CV)
+        .where(CV.user_id == current_user.id)
+        .offset(skip)
+        .limit(limit)
+        .order_by(CV.created_at.desc())
     )
     return result.scalars().all()
 
 
 @router.get("/{cv_id}", response_model=CVResponse)
-async def get_cv(cv_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(CV).where(CV.id == cv_id))
+async def get_cv(
+    cv_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(CV).where(CV.id == cv_id, CV.user_id == current_user.id)
+    )
     cv = result.scalar_one_or_none()
     if not cv:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV no encontrado")
     return cv
 
 
 @router.delete("/{cv_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_cv(cv_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(CV).where(CV.id == cv_id))
+async def delete_cv(
+    cv_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(CV).where(CV.id == cv_id, CV.user_id == current_user.id)
+    )
     cv = result.scalar_one_or_none()
     if not cv:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CV no encontrado")
 
     storage = StorageService()
     try:
         await storage.delete(cv.file_path)
     except Exception:
-        pass  # file may not exist in storage; proceed with DB deletion
+        pass
 
     await db.delete(cv)
     await db.commit()
