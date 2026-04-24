@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import axios, { AxiosError } from 'axios'
 import toast from 'react-hot-toast'
-import type { CV, ParsedProfile, ApiError, JobSearchResult, JobSearchParams, SavedJob } from '../types'
+import type { CV, ParsedProfile, ApiError, JobSearchResult, JobSearchParams, SavedJob, MatchResponse } from '../types'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
@@ -106,6 +106,17 @@ export const jobApi = {
 
   getSaved: async (): Promise<SavedJob[]> => {
     const response = await api.get<SavedJob[]>('/jobs/saved')
+    return response.data
+  },
+}
+
+// Match API
+export const matchApi = {
+  matchJobs: async (
+    cvId: string,
+    jobs: Array<{ external_id: string; title: string; company: string; description: string }>
+  ): Promise<MatchResponse> => {
+    const response = await api.post<MatchResponse>('/match/jobs', { cv_id: cvId, jobs })
     return response.data
   },
 }

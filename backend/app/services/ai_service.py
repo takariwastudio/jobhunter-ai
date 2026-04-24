@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Optional, List
 import anthropic
 from app.config import get_settings
 from app.schemas.cv import ParsedProfileData, ExperienceItem, EducationItem, SkillItem, LanguageItem
@@ -12,7 +12,7 @@ class AIService:
 
     def __init__(self):
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self.model = "claude-3-5-sonnet-20241022"  # Latest Claude 3.5 Sonnet
+        self.model = "claude-sonnet-4-6"
 
     async def parse_cv(self, cv_text: str) -> ParsedProfileData:
         """
@@ -299,3 +299,132 @@ Score from 0-100 based on skills match, relevant experience, and overall fit.
 
         except Exception as e:
             raise ValueError(f"Error calculating match score: {str(e)}")
+
+    def _build_profile_summary(self, profile: ParsedProfileData) -> str:
+        """Format profile data into a compact text block for Claude."""
+        skills_by_category: dict[str, list[str]] = {}
+        for s in profile.skills:
+            skills_by_category.setdefault(s.category, []).append(s.name)
+
+        skills_text = "\n".join(
+            f"  {cat.capitalize()}: {', '.join(names)}"
+            for cat, names in skills_by_category.items()
+        )
+
+        experience_text = "\n".join(
+            f"  - {exp.title} at {exp.company}"
+            + (f" ({exp.start_date} – {exp.end_date or 'Present'})" if exp.start_date else "")
+            + (f": {exp.description[:150]}" if exp.description else "")
+            for exp in profile.experience[:5]
+        )
+
+        education_text = "\n".join(
+            f"  - {edu.degree} @ {edu.institution}" + (f" ({edu.end_date})" if edu.end_date else "")
+            for edu in profile.education[:3]
+        )
+
+        languages_text = ", ".join(f"{l.name} ({l.level})" for l in profile.languages)
+
+        parts = [f"Name: {profile.full_name or 'Unknown'}"]
+        if profile.summary:
+            parts.append(f"Summary: {profile.summary[:300]}")
+        if skills_text:
+            parts.append(f"Skills:\n{skills_text}")
+        if experience_text:
+            parts.append(f"Experience:\n{experience_text}")
+        if education_text:
+            parts.append(f"Education:\n{education_text}")
+        if languages_text:
+            parts.append(f"Languages: {languages_text}")
+        return "\n\n".join(parts)
+
+    async def batch_match_scores(
+        self,
+        profile: ParsedProfileData,
+        jobs: List[dict],
+    ) -> List[dict]:
+        """
+        Score compatibility between a candidate profile and multiple jobs in one call.
+
+        Uses prompt caching so the profile (expensive part) is cached across calls
+        from the same user session.
+
+        Args:
+            profile: Parsed candidate profile
+            jobs: List of dicts with keys: external_id, title, company, description
+
+        Returns:
+            List of dicts with keys: external_id, score, reasoning,
+            matching_skills, missing_skills, recommendation
+        """
+        profile_summary = self._build_profile_summary(profile)
+
+        system_prompt = f"""You are an expert technical recruiter. Analyze candidate-job fit with precision.
+
+CANDIDATE PROFILE:
+{profile_summary}
+
+SCORING GUIDE:
+- 75-100 (strong_match): Candidate meets most requirements; strong overlap in skills and experience level
+- 50-74 (good_match): Solid overlap but some gaps; candidate could grow into missing areas
+- 25-49 (partial_match): Relevant background but significant skill or domain gaps
+- 0-24 (weak_match): Little relevant experience or skills alignment
+
+Always be honest — a weak match should score low, not 50. A strong match can score 90+."""
+
+        jobs_block = "\n\n".join(
+            f"JOB {i + 1} (external_id: {job['external_id']})\n"
+            f"Title: {job['title']}\nCompany: {job['company']}\n"
+            f"Description: {job['description'][:600]}"
+            for i, job in enumerate(jobs)
+        )
+
+        user_message = f"""Analyze compatibility between the candidate and each of these {len(jobs)} jobs.
+
+{jobs_block}
+
+Return a JSON array with exactly {len(jobs)} objects in the same order as the jobs above:
+[
+  {{
+    "external_id": "<the job's external_id>",
+    "score": <integer 0-100>,
+    "reasoning": "<2-3 sentences explaining the fit>",
+    "matching_skills": ["<skill1>", "<skill2>"],
+    "missing_skills": ["<skill3>"],
+    "recommendation": "<strong_match|good_match|partial_match|weak_match>"
+  }}
+]
+
+Respond ONLY with the JSON array. No markdown, no explanations outside the array."""
+
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=[{"role": "user", "content": user_message}],
+            )
+
+            content = response.content[0].text.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+
+            results = json.loads(content.strip())
+            if not isinstance(results, list):
+                raise ValueError("Expected a JSON array from Claude")
+            return results
+
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse batch match response as JSON: {e}")
+        except Exception as e:
+            raise ValueError(f"Error in batch match scoring: {e}")

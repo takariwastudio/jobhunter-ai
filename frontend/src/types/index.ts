@@ -116,3 +116,19 @@ export interface ApiError {
   message: string
   detail?: string
 }
+
+export type MatchRecommendation = 'strong_match' | 'good_match' | 'partial_match' | 'weak_match'
+
+export interface MatchScore {
+  external_id: string
+  score: number
+  reasoning: string
+  matching_skills: string[]
+  missing_skills: string[]
+  recommendation: MatchRecommendation
+}
+
+export interface MatchResponse {
+  results: MatchScore[]
+  profile_name: string | null
+}
